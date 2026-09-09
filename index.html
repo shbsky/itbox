@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="90FFFM5GYzZS3KuoAzrPnc">
+<head data-page-node-id="tF7i2ytOlZK7MuBwELM22O">
+<meta charset="UTF-8" data-page-node-id="C6WcAc4GrNCnV4kp9ke0V4">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="IPsFCAgHVhHZcUNidi5BIX">
+<title>IT工具箱 · Web 版 | 运维工程师的一站式工具箱</title>
+<link rel="stylesheet" href="assets/css/style.css" data-page-node-id="x9lMGVtBxrlD7ZhJMpLuAQ">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' data-page-node-id="1WbsC12PRFqijKsuEX5VsE"><text y='.9em' font-size='90' data-page-node-id="5G7TANjI5tKOugBqFC9pgK">🛠️</text></svg>">
+</head>
+<body data-page-node-id="T0rkePMX8nEraPuu0COCow">
+
+<div class="app" data-page-node-id="O60i5WH4Nv75qSOpTpnRf9">
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="sidebar" id="sidebar" data-page-node-id="4R9hpwBfAzzsLgnfANytfs">
+    <div class="brand" data-page-node-id="XsCX4FCiFUgO10ilnhBdQW">
+      <span class="brand-logo" data-page-node-id="Rj68eXTVvCCGBfvVpgLFxM">🛠️</span>
+      <div class="brand-txt" data-page-node-id="dpXh6SknDnHAaD54G4vYy8">
+        <b data-page-node-id="pTi8I59B3EoETmmD1izqBB">IT工具箱</b>
+        <small data-page-node-id="sqDJCiDTvc7F6tlJZLuvlp">itbox · web</small>
+      </div>
+    </div>
+
+    <div class="search-wrap" data-page-node-id="nBsvstYnIQ8hHKiYlsGgbC">
+      <span class="search-ico" data-page-node-id="cHyyGK1e1TuYTycXqyi7Di">🔍</span>
+      <input id="search" type="text" placeholder="搜索工具… ( / 聚焦 )" autocomplete="off" data-page-node-id="Ecu7a6Mk93Cs10zgkV5P2L">
+      <button id="searchClear" class="search-clear" title="清除" data-page-node-id="HHGGcYqpOnim78YpfmrVSe">✕</button>
+    </div>
+
+    <nav class="nav" id="nav" data-page-node-id="bivA50V5d4QpOLovEbMSxx"></nav>
+
+    <div class="side-foot" data-page-node-id="2hE0R3EdEYK7MmEKXko6DA">
+      <div class="foot-line" data-page-node-id="mMRsQpDnqlwsun8HJqx0JZ"><span data-page-node-id="W7hTe3w492R0Il4y5oRQTp">工具总数</span><b id="statTotal" data-page-node-id="Od0z77Cuc45Kar2n7FI1h6">0</b></div>
+      <div class="foot-line" data-page-node-id="DUQpLYqS4WJuoeDDzSBMIE"><span data-page-node-id="XGA8t8qwgmFkhxkSogKd9O">收藏</span><b id="statFav" data-page-node-id="JwKFU681F7wy0F7HYAzBWI">0</b></div>
+      <button id="themeBtn" class="theme-btn" title="切换主题" data-page-node-id="ICDF6QT87q1D6bgYMhhQPT">
+        <span id="themeIco" data-page-node-id="8J3EadTb4CzQeUFbwAwELc">🌙</span> <span id="themeTxt" data-page-node-id="yUx4xEsGcK7Ysmp1Kk1ngX">深色模式</span>
+      </button>
+      <p class="foot-tip" data-page-node-id="qCaTPSmtLgVYIVvxrexDWq">全部逻辑本地计算 · 断网可用 · 数据不上传</p>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="main" id="main" data-page-node-id="3Y42L1zxt8P2geE2lKdbQB">
+    <header class="topbar" data-page-node-id="fauzGWiAvJR53jxfLbGsJS">
+      <button id="menuBtn" class="menu-btn" title="菜单" data-page-node-id="5zIlTNn9521mj4kNiecdfB">☰</button>
+      <div class="topbar-txt" data-page-node-id="TNTeHTV4UGQCnhlOJasF9K">
+        <h1 id="pageTitle" data-page-node-id="muRSHloiAFXvjNdMbETblu">全部工具</h1>
+        <p id="pageDesc" data-page-node-id="WgWh1KySyL7R7KOXFTT5m3">运维常用工具合集，点开即用</p>
+      </div>
+      <div class="topbar-right" data-page-node-id="MFDqEYstZr7j1PpCZrhlDy">
+        <span class="badge" data-page-node-id="VHqswDlwpeCTnrtuB1WSze">v1.0</span>
+      </div>
+    </header>
+
+    <div id="grid" class="grid" data-page-node-id="R5zyjv3cV3A3tmMHfyzXdC"></div>
+    <div id="empty" class="empty" hidden data-page-node-id="waYbycGUJDnKXdzBE5BdCs">
+      <div class="empty-ico" data-page-node-id="eaK5ZZ3PhMbPVAnJc5Obnn">🔍</div>
+      <p data-page-node-id="wGD29peUTSTWwFIWok5ECc">没有匹配的工具，换个关键词试试</p>
+    </div>
+
+    <footer class="footer" data-page-node-id="GRUSVCQeEJcR92R64DJu20">
+      IT工具箱 Web 版 · 纯前端实现，无任何网络请求
+    </footer>
+  </main>
+</div>
+
+<!-- ============ 工具面板 ============ -->
+<div class="panel-mask" id="panelMask" hidden data-page-node-id="utO9EPXgWT4YSeMPBULGOu"></div>
+<section class="panel" id="panel" hidden data-page-node-id="0PJHrBkV4u0DC9xZbjcd1q">
+  <div class="panel-head" data-page-node-id="4Ewq9VUowTUjKZWhBZ878i">
+    <div class="panel-title" data-page-node-id="1ZWsBRqnpMDzFP52WXvl7r">
+      <span id="panelIcon" class="panel-icon" data-page-node-id="fyc0GpiPRQRuXx26VpX1jY">🧰</span>
+      <div data-page-node-id="6I3LIgoxrLL0n7vO1l5ZA1">
+        <h2 id="panelName" data-page-node-id="K2TtBMyhOUksFIMFEKYF9h">工具</h2>
+        <p id="panelDesc" data-page-node-id="QKbbb9TMNy3rfFKzRt6nhH"></p>
+      </div>
+    </div>
+    <div class="panel-ops" data-page-node-id="CVy43nhpXWIzp3k8wxOgHO">
+      <button id="panelFav" class="icon-btn" title="收藏 / 取消收藏" data-page-node-id="yrKeG73wwKJPZ2OoWqvWmD">☆</button>
+      <button id="panelClose" class="icon-btn" title="关闭 (Esc)" data-page-node-id="2VyFR6eyENPjpBTMBRRgWz">✕</button>
+    </div>
+  </div>
+  <div class="panel-body" id="panelBody" data-page-node-id="aaO95rB8gI7ekBWtNvhznf"></div>
+</section>
+
+<div id="toast" class="toast" data-page-node-id="gDpkOS6uieSfCVDvq6xfMp"></div>
+
+<script src="assets/js/util.js"></script>
+<script src="assets/js/data.js"></script>
+<script src="assets/js/tools-net.js"></script>
+<script src="assets/js/tools-linux.js"></script>
+<script src="assets/js/tools-db.js"></script>
+<script src="assets/js/tools-cloud.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

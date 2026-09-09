@@ -376,43 +376,56 @@
         U.setOut('dout', L.join('\n'));
       };
       $('#dgo2').onclick = function () {
-        var lines = $('#dcom').value.split('\n');
-        var inSvc = false, svcs = {}, curName = null, topNetworks = [];
+        var lines = $('#dcom').value.replace(/\t/g, '  ').split('\n');
+        var svcs = {}, curName = null, topNetworks = [];
+        var inSvc = false, svcInd = -1, lastKey = null, lastKeyInd = -1;
+        var inNet = false, netInd = -1;
         for (var i = 0; i < lines.length; i++) {
           var raw = lines[i].replace(/\s+$/, '');
           if (!raw.trim() || /^\s*#/.test(raw)) continue;
           var indent = raw.length - raw.replace(/^\s+/, '').length;
           var t = raw.trim();
           if (indent === 0) {
-            if (/^services\s*:/.test(t)) { inSvc = true; continue; }
-            inSvc = false;
-            if (/^networks\s*:/.test(t)) {
-              for (var j = i + 1; j < lines.length; j++) {
-                var l2 = lines[j], ind2 = l2.length - l2.replace(/^\s+/, '').length;
-                if (!l2.trim()) continue;
-                if (ind2 <= 0) break;
-                if (ind2 <= 2 && l2.trim().indexOf('-') !== 0) topNetworks.push(l2.trim().replace(/:$/, ''));
-              }
-            }
+            inSvc = /^services\s*:/.test(t);
+            inNet = /^networks\s*:/.test(t);
+            svcInd = -1; curName = null; lastKey = null; netInd = -1;
+            continue;
+          }
+          if (inNet) {
+            if (netInd < 0) netInd = indent;
+            if (indent === netInd && t.indexOf('-') !== 0 && /:$/.test(t))
+              topNetworks.push(t.replace(/:$/, '').replace(/^["']|["']$/g, ''));
             continue;
           }
           if (!inSvc) continue;
-          if (indent <= 2 && /:$/.test(t)) { curName = t.replace(/:$/, ''); svcs[curName] = { lists: {} }; continue; }
-          if (!curName) continue;
-          var m = /^(-?\s*)([^:]+):\s*(.*)$/.exec(t);
-          if (t.indexOf('- ') === 0 || t === '-') {
-            // 列表项归属上一个 key
-            if (svcs[curName]._last) svcs[curName].lists[svcs[curName]._last].push(t.replace(/^-\s*/, '').replace(/^["']|["']$/g, ''));
+          // 服务名行：与 services 第一个子键同级的 "xxx:" 行
+          if (/:$/.test(t) && t.indexOf('-') !== 0 && (svcInd < 0 || indent === svcInd)) {
+            if (svcInd < 0) svcInd = indent;
+            curName = t.replace(/:$/, '').replace(/^["']|["']$/g, '').trim();
+            svcs[curName] = { lists: {} };
+            lastKey = null;
             continue;
           }
-          if (m) {
-            var k = m[2].trim(), v = m[3].trim();
-            if (v === '') { svcs[curName].lists[k] = []; svcs[curName]._last = k; }
-            else { svcs[curName][k] = v.replace(/^["']|["']$/g, ''); svcs[curName]._last = null; }
+          if (!curName || indent <= svcInd) continue;
+          // 列表项归属上一个 key
+          if (t.indexOf('- ') === 0 || t === '-') {
+            if (lastKey) svcs[curName].lists[lastKey].push(t.replace(/^-\s*/, '').replace(/^["']|["']$/g, ''));
+            continue;
           }
+          var m = /^([^:]+):\s*(.*)$/.exec(t);
+          if (!m) continue;
+          var k = m[1].trim().replace(/^["']|["']$/g, ''), v = m[2].trim();
+          if (v === '') { svcs[curName].lists[k] = []; lastKey = k; lastKeyInd = indent; continue; }
+          // map 风格的 environment / labels（TZ: xxx → TZ=xxx）
+          if (lastKey && indent > lastKeyInd && (lastKey === 'environment' || lastKey === 'labels')) {
+            svcs[curName].lists[lastKey].push(k + '=' + v.replace(/^["']|["']$/g, ''));
+            continue;
+          }
+          svcs[curName][k] = v.replace(/^["']|["']$/g, '');
+          lastKey = null;
         }
         var names = Object.keys(svcs);
-        if (!names.length) { U.toast('未解析到 services，请检查 YAML 缩进', 'err'); return; }
+        if (!names.length) { U.toast('未解析到 services，请检查 YAML 缩进（2/4/6 空格均可，不能用 Tab）', 'err'); return; }
         var out = [];
         names.forEach(function (n) {
           var s = svcs[n], cmd = ['docker run -d'];
@@ -422,7 +435,7 @@
           (s.lists.ports || []).forEach(function (p) { cmd.push('-p ' + p); });
           (s.lists.volumes || []).forEach(function (v) { cmd.push('-v "' + v + '"'); });
           (s.lists.environment || []).forEach(function (e) { cmd.push('-e "' + e + '"'); });
-          (s.env_file || []).forEach(function (e) { cmd.push('--env-file ' + e); });
+          ((s.lists && s.lists.env_file) || []).forEach(function (e) { cmd.push('--env-file ' + e); });
           (s.lists.networks || []).forEach(function (x) { cmd.push('--network ' + x); });
           if (s.network_mode) cmd.push('--network ' + s.network_mode);
           if (s.mem_limit) cmd.push('--memory ' + s.mem_limit);

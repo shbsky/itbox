@@ -80,12 +80,11 @@ p{margin:0}
 
 .search-wrap{position:relative;margin:0 14px 12px}
 .search-wrap input{
-  width:100%;padding:9px 30px 9px 32px;border-radius:9px;border:1px solid #334155;
+  width:100%;padding:9px 30px 9px 12px;border-radius:9px;border:1px solid #334155;
   background:#16202f;color:#e2e8f0;outline:none;transition:.15s;
 }
 .search-wrap input::placeholder{color:#64748b}
 .search-wrap input:focus{border-color:var(--side-active);background:#1b2637}
-.search-ico{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:13px;opacity:.7}
 .search-clear{
   position:absolute;right:6px;top:50%;transform:translateY(-50%);
   background:none;border:0;color:#64748b;cursor:pointer;font-size:12px;padding:4px 6px;border-radius:5px;display:none;

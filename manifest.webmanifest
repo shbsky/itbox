@@ -1,0 +1,16 @@
+{
+  "name": "IT工具箱 · 运维工程师一站式工具箱",
+  "short_name": "IT工具箱",
+  "description": "33+ 运维工具 · 纯前端本地计算 · 离线可用",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#2563eb",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "assets/icons/icon-192.png",       "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-512.png",       "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icons/icon-maskable.png",  "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

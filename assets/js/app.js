@@ -209,10 +209,24 @@
     }
   });
 
-  /* ---------- 移动端菜单 ---------- */
-  document.getElementById('menuBtn').onclick = function () {
-    document.getElementById('sidebar').classList.toggle('open');
-  };
+/* ---------- 移动端菜单 ---------- */
+document.getElementById('menuBtn').onclick = function (e) {
+  // 关键：menuBtn 在 #main 内部，不阻止冒泡会立刻触发下面的"点外部收起"，导致开关互相抵消
+  e.stopPropagation();
+  document.getElementById('sidebar').classList.toggle('open');
+};
+// 点击主区（侧栏外）自动收起侧栏——仅移动端且侧栏打开时
+(function () {
+  var sb = document.getElementById('sidebar');
+  var main = document.getElementById('main');
+  if (!sb || !main) return;
+  main.addEventListener('click', function (e) {
+    if (window.innerWidth >= 900) return;
+    if (e.target.closest && e.target.closest('#menuBtn')) return;
+    if (!sb.classList.contains('open')) return;
+    sb.classList.remove('open');
+  });
+})();
 
   /* ---------- 启动 ---------- */
   document.getElementById('statTotal').textContent = tools.length;

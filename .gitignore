@@ -1,0 +1,14 @@
+# 服务运行日志（由 lionbox 服务生成）
+logs/
+*.log
+
+# 临时文件 / 备份
+*.bak
+*.tmp
+*.orig
+*~
+
+# 系统垃圾
+.DS_Store
+Thumbs.db
+desktop.ini

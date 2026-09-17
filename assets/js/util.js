@@ -375,9 +375,76 @@
     }
   };
 
+  /* ---------------- ZIP 打包（store 模式，零依赖） ---------------- */
+  var crcTable = null;
+  U.crc32 = function (u8) {
+    if (!crcTable) {
+      crcTable = new Uint32Array(256);
+      for (var n = 0; n < 256; n++) {
+        var c = n;
+        for (var k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        crcTable[n] = c >>> 0;
+      }
+    }
+    var crc = 0xFFFFFFFF;
+    for (var i = 0; i < u8.length; i++) crc = crcTable[(crc ^ u8[i]) & 0xFF] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  };
+  /**
+   * 生成 ZIP（仅存储不压缩，图片本身已压缩，再套 deflate 收益极小）
+   * @param {Array<{name:string, data:Uint8Array}>} files
+   * @returns {Blob}
+   */
+  U.zipStore = function (files) {
+    var enc = new TextEncoder(), parts = [], central = [], offset = 0;
+    files.forEach(function (f) {
+      var name = enc.encode(f.name), data = f.data, crc = U.crc32(data), size = data.length;
+      var lh = new Uint8Array(30 + name.length), lv = new DataView(lh.buffer);
+      lv.setUint32(0, 0x04034b50, true); lv.setUint16(4, 20, true);
+      lv.setUint16(6, 0x0800, true);                       // bit 11：文件名为 UTF-8
+      lv.setUint16(8, 0, true);                            // 0 = store
+      lv.setUint16(10, 0, true); lv.setUint16(12, 0x21, true);  // 1980-01-01
+      lv.setUint32(14, crc, true); lv.setUint32(18, size, true); lv.setUint32(22, size, true);
+      lv.setUint16(26, name.length, true); lv.setUint16(28, 0, true);
+      lh.set(name, 30);
+      parts.push(lh, data);
+
+      var ch = new Uint8Array(46 + name.length), cv = new DataView(ch.buffer);
+      cv.setUint32(0, 0x02014b50, true); cv.setUint16(4, 20, true); cv.setUint16(6, 20, true);
+      cv.setUint16(8, 0x0800, true); cv.setUint16(10, 0, true);
+      cv.setUint16(12, 0, true); cv.setUint16(14, 0x21, true);
+      cv.setUint32(16, crc, true); cv.setUint32(20, size, true); cv.setUint32(24, size, true);
+      cv.setUint16(28, name.length, true);
+      cv.setUint32(42, offset, true);                      // 本地头偏移
+      ch.set(name, 46);
+      central.push(ch);
+      offset += lh.length + size;
+    });
+    var cdSize = central.reduce(function (a, b) { return a + b.length; }, 0);
+    var eocd = new Uint8Array(22), ev = new DataView(eocd.buffer);
+    ev.setUint32(0, 0x06054b50, true);
+    ev.setUint16(8, files.length, true); ev.setUint16(10, files.length, true);
+    ev.setUint32(12, cdSize, true); ev.setUint32(16, offset, true);
+    return new Blob(parts.concat(central, [eocd]), { type: 'application/zip' });
+  };
+
+  /* ---------------- 文件下载（Blob） ---------------- */
+  U.saveBlob = function (filename, blob) {
+    try {
+      if (!URL.createObjectURL) throw new Error('当前环境不支持下载');
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); document.body.removeChild(a); }, 400);
+      U.toast('已导出 ' + filename, 'ok');
+    } catch (e) { U.toast('导出失败：' + e.message, 'err'); }
+  };
+
   /* ---------------- 工具注册 ---------------- */
   LB.tools = [];
   LB.cats = [
+    { id: 'office', name: '办公工具', icon: '📄', desc: '图片压缩、格式转换等日常办公小工具' },
     { id: 'net', name: '网络工具', icon: '🌐', desc: '子网划分、CIDR 转换、IP 处理、速查表' },
     { id: 'linux', name: 'Linux 工具', icon: '🐧', desc: '密码生成、Crontab、编码转换、权限计算' },
     { id: 'db', name: '数据库工具', icon: '🗄️', desc: 'SQL 审核、执行计划分析、慢日志、权限生成' },

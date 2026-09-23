@@ -16,3 +16,12 @@ desktop.ini
 # 本机说明文件（含本机路径，不上传）
 說明.txt
 说明.txt
+
+# 部署相关（本机 / NAS 用，仓库只放纯静态前端 → GitHub Pages）
+/Dockerfile
+/docker-compose.yml
+/server.js
+/service.ps1
+/push-to-github.ps1
+/push-to-github.sh
+/部署到群晖.md

@@ -1,5 +1,5 @@
 /* IT工具箱 Service Worker */
-const CACHE = 'itbox-v12';
+const CACHE = 'itbox-v13';
 const ASSETS = [
   './',
   './index.html',
@@ -22,6 +22,7 @@ const ASSETS = [
   './assets/js/pwa.js',
   './assets/icons/icon-192.png',
   './assets/icons/icon-512.png',
+  './assets/icons/icon-maskable.png',
   './assets/icons/apple-touch-icon.png'
 ];
 

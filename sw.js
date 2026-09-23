@@ -1,5 +1,5 @@
 /* IT工具箱 Service Worker */
-const CACHE = 'itbox-v4';
+const CACHE = 'itbox-v12';
 const ASSETS = [
   './',
   './index.html',
@@ -8,10 +8,16 @@ const ASSETS = [
   './assets/js/util.js',
   './assets/js/data.js',
   './assets/js/tools-office.js',
+  './assets/js/tools-pdf.js',
+  './assets/js/tools-idphoto.js',
+  './assets/js/tools-audio.js',
   './assets/js/tools-net.js',
   './assets/js/tools-linux.js',
   './assets/js/tools-db.js',
   './assets/js/tools-cloud.js',
+  './assets/lib/lame.min.js',
+  './assets/lib/pdf-lib.min.js',
+  './assets/js/office-write.js',
   './assets/js/app.js',
   './assets/js/pwa.js',
   './assets/icons/icon-192.png',

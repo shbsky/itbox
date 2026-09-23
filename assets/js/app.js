@@ -135,7 +135,10 @@
     var t = tools.filter(function (x) { return x.id === id; })[0];
     if (!t) return;
     state.cur = t;
-    document.getElementById('panelIcon').textContent = t.icon;
+    /* 图标允许两种形态：emoji 字元（用 textContent）或内联 SVG（用 innerHTML）。
+       只有以 <svg 开头才走 innerHTML，其余一律 textContent —— 不留任何注入面。 */
+    var icoEl = document.getElementById('panelIcon');
+    if (/^<svg/.test(t.icon)) icoEl.innerHTML = t.icon; else icoEl.textContent = t.icon;
     document.getElementById('panelName').textContent = t.name;
     document.getElementById('panelDesc').textContent = t.desc;
     bodyEl.innerHTML = typeof t.tpl === 'function' ? t.tpl() : (t.tpl || '');

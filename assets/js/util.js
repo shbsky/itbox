@@ -441,10 +441,68 @@
     } catch (e) { U.toast('导出失败：' + e.message, 'err'); }
   };
 
+  /* ---------------- 按需加载本地库（PDF 等重型依赖） ---------------- */
+  var _libs = {};
+  /**
+   * 动态注入脚本，同一 URL 只加载一次
+   * PDF 两个库合计约 2MB，不能进 sw.js 预缓存（否则打开工具箱首页就要下 2MB）。
+   * 这里改成首次真正用到时才加载，之后交给 Service Worker 的 runtime cache，断网也能用。
+   */
+  U.loadScript = function (url) {
+    if (_libs[url]) return _libs[url];
+    _libs[url] = new Promise(function (res, rej) {
+      var s = document.createElement('script');
+      s.src = url;
+      s.async = true;
+      s.onload = function () { res(); };
+      s.onerror = function () {
+        delete _libs[url];
+        rej(new Error('库加载失败：' + url + '（请确认文件已放到 assets/lib/）'));
+      };
+      document.head.appendChild(s);
+    });
+    return _libs[url];
+  };
+  /** 加载 pdf-lib（@cantoo 版，自带 AES / RC4 加解密与权限位） */
+  U.loadPdfLib = function () {
+    return U.loadScript('assets/lib/pdf-lib.min.js').then(function () {
+      if (!window.PDFLib) throw new Error('pdf-lib 未能初始化');
+      return window.PDFLib;
+    });
+  };
+  /** 加载 pdf.js（渲染页面为图片、生成缩略图） */
+  U.loadPdfJs = function () {
+    return U.loadScript('assets/lib/pdf.min.js').then(function () {
+      var pj = window.pdfjsLib;
+      if (!pj) throw new Error('pdf.js 未能初始化');
+      if (pj.GlobalWorkerOptions) {
+        pj.GlobalWorkerOptions.workerSrc = 'assets/lib/pdf.worker.min.js';
+      }
+      return pj;
+    });
+  };
+  /**
+   * 用统一参数打开 PDF 供渲染使用
+   * cMap / 标准字体必须显式指定，否则中文 PDF 会整段渲染成空白。
+   * 注意：pdf.js 会「吃掉」传入的 data，调用方要传副本（bytes.slice()）。
+   */
+  U.pdfOpen = function (bytes, password) {
+    return U.loadPdfJs().then(function (pj) {
+      var o = {
+        data: bytes,
+        cMapUrl: 'assets/lib/cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: 'assets/lib/standard_fonts/'
+      };
+      if (password) o.password = password;
+      return pj.getDocument(o).promise;
+    });
+  };
+
   /* ---------------- 工具注册 ---------------- */
   LB.tools = [];
   LB.cats = [
-    { id: 'office', name: '办公工具', icon: '📄', desc: '图片压缩、格式转换等日常办公小工具' },
+    { id: 'office', name: '办公工具', icon: '📄', desc: '图片压缩、PDF 处理、格式转换等日常办公小工具' },
     { id: 'net', name: '网络工具', icon: '🌐', desc: '子网划分、CIDR 转换、IP 处理、速查表' },
     { id: 'linux', name: 'Linux 工具', icon: '🐧', desc: '密码生成、Crontab、编码转换、权限计算' },
     { id: 'db', name: '数据库工具', icon: '🗄️', desc: 'SQL 审核、执行计划分析、慢日志、权限生成' },

@@ -12,3 +12,7 @@ logs/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# 本机说明文件（含本机路径，不上传）
+說明.txt
+说明.txt

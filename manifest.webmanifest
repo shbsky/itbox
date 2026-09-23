@@ -2,7 +2,7 @@
   "id": "./",
   "name": "IT工具箱 · 运维工程师一站式工具箱",
   "short_name": "IT工具箱",
-  "description": "34+ 运维与办公工具 · 纯前端本地计算 · 离线可用",
+  "description": "38 个运维与办公工具 · 含 PDF 处理、证件照制作、音频互转与视频提取音频 · 纯前端本地计算 · 离线可用",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

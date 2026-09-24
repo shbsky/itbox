@@ -283,36 +283,204 @@
   }
 
   /**
-   * 从画面四条边向内「泛洪」，把连通的背景整片收进遮罩
+   * 清掉零碎孤岛：面积小、又不挨着画面边缘的连通块，翻到对面去
+   *
+   * 为什么只翻「不挨边」的：证件照里背景一定是从画外延伸进来的（和四条边相连），
+   * 人物一定连成一大片。所以一个又小又悬空的小块，只可能是判定噪声。
+   *
+   * 为什么还要求「面积小」：细发丝、眼镜腿、手指这些真实结构面积也不大，
+   * 但它们**连在人物那一大块上**（不是独立连通块），所以不会被误翻。
+   * 阈值取画面的两万五千分之一（400 万像素约 160 像素）—— 够清掉麻点，
+   * 又远小于任何真实部件。
+   *
+   * 这一步是补色度闸的尾巴：人脸轮廓那一圈是「墙 → 皮肤」的过渡，JPEG 色度
+   * 二次采样加镜头虚化之后，个别像素会带一点肤色，过不了闸，于是在轮廓外
+   * 散成一颗颗灰点 —— 换白底后就是脸旁边一层「黑头」似的麻点。
+   *
+   * @param {Uint8Array} mask 0/1 遮罩（1=背景），原地修改
+   * @param {number} w
+   * @param {number} h
+   */
+  function despeckle(mask, w, h) {
+    var n = w * h;
+    var minArea = Math.max(16, Math.round(n / 25000));
+    var id = new Int32Array(n);                 // 0 = 未访问，否则是连通块编号
+    var cap = 8192, stk = new Int32Array(cap);
+    var siz = [], edge = [];
+    var k = 0, i, p, px, py, v, cnt, bd, a, sp;
+    function push(q) {
+      if (sp === cap) { cap *= 2; var ns = new Int32Array(cap); ns.set(stk); stk = ns; }
+      stk[sp++] = q;
+    }
+    for (i = 0; i < n; i++) {
+      if (id[i]) continue;
+      k++;
+      v = mask[i];
+      sp = 0; cnt = 0; bd = 0;
+      id[i] = k; push(i);
+      while (sp) {
+        p = stk[--sp];
+        cnt++;
+        px = p % w; py = (p - px) / w;
+        if (px === 0 || py === 0 || px === w - 1 || py === h - 1) bd = 1;
+        if (px > 0 && !id[a = p - 1] && mask[a] === v) { id[a] = k; push(a); }
+        if (px < w - 1 && !id[a = p + 1] && mask[a] === v) { id[a] = k; push(a); }
+        if (py > 0 && !id[a = p - w] && mask[a] === v) { id[a] = k; push(a); }
+        if (py < h - 1 && !id[a = p + w] && mask[a] === v) { id[a] = k; push(a); }
+      }
+      siz.push(cnt); edge.push(bd);
+    }
+    var flip = new Uint8Array(k + 1);
+    for (i = 0; i < k; i++) if (!edge[i] && siz[i] < minArea) flip[i + 1] = 1;
+    for (i = 0; i < n; i++) if (flip[id[i]]) mask[i] = mask[i] ? 0 : 1;
+  }
+
+  /* ---------- 背景的「色度签名」：区分「同一面墙的明暗」和「别的材质」----------
+   * 泛洪要想吃掉阴影、渐晕这类「离底色较远」的区域，就得先回答一个问题：
+   * 这个像素还是不是同一面墙？只比 RGB 距离不够 —— 偏亮的脸颊、粉白上衣
+   * 都可能落在容差内，于是泛洪顺着柔和的轮廓爬进人脸，整张脸被啃掉
+   * （用户实测就是这个现象：换白底后脸上出现大片白斑）。
+   *
+   * 物理上有个好用的不变量：同一面墙被不同强度的光照到，RGB 近似**等比例
+   * 缩放**，色彩倾向不变；而皮肤、布料自带色彩倾向，且随材质而变。
+   * 于是用**归一化色度** Cr'=(R−Y)/Y、Cb'=(B−Y)/Y 当判据 —— 它对整体
+   * 明暗完全免疫（C = k·B ⇒ Y = k·Y_B ⇒ Cr' 不变），天然区分
+   * 「同一材质的明暗变化」和「换了一种材质」。
+   *
+   * 实测（李红英 674×900，底色 rgb(202,198,197)；刘裕钧 694×900，底色 rgb(214,213,213)）：
+   *   墙面     归一化色度偏离 p99 ≤ 0.031；
+   *   确定前景 中位数 0.33；
+   *   偏亮脸颊 (215,195,185) 偏离 0.061、粉白上衣 (240,228,226) 偏离 0.023；
+   *   把底色按 0.5~1.08 等比例压暗/提亮（模拟阴影、渐晕、补光）偏离都 ≤ 0.005。
+   *
+   * 阈值取 0.030（+底色自带色度的三成）：墙面全部放行，脸颊、头发、深色衣服
+   * 全部挡住。0.030 而不是更紧的 0.018，是因为**边界外圈那几个像素**会被
+   * JPEG 色度二次采样和镜头虚化染上一点前景的颜色（实测偏离 0.021~0.029，
+   * 刚好卡在 0.018 外面），留下一圈十几像素宽的灰边 —— 用户说「换白底后
+   * 人脸旁边一圈黑影」就是这个。放宽到 0.030 让它们正常被吃掉，
+   * 而真正的皮肤（0.06 起步）离阈值还远得很。
+   */
+  function lumOf(r, g, b) { return 0.299 * r + 0.587 * g + 0.114 * b; }
+
+  function chromaSig(b0, tol) {
+    var Y = lumOf(b0.r, b0.g, b0.b);
+    if (Y < 1) Y = 1;
+    var cr = (b0.r - Y) / Y, cb = (b0.b - Y) / Y;
+    // 「背景容差」滑块：默认 30。乘在色度闸上（范围 5~120 → 系数 0.67~1.35），
+    // 上限压住是怕调太大时把皮肤的色度也放进来（偏亮脸颊实测 0.061）。
+    var kTol = Math.max(0.6, Math.min(1.35, 0.6 + 0.4 * (tol == null ? 30 : tol) / 30));
+    return {
+      r: b0.r, g: b0.g, b: b0.b,
+      cr: cr, cb: cb,
+      // 底色本身越「带色」，越可能是彩色墙——按比例放宽，免得彩色墙的像素被一刀切掉
+      tol: (0.030 + 0.3 * Math.abs(cr) + 0.3 * Math.abs(cb)) * kTol,
+      n: b0.r * b0.r + b0.g * b0.g + b0.b * b0.b,
+      kMin: 0.35,      // 比底色暗 65% 以内算阴影；再暗就不是「被照亮」而是换材质了
+      /* 亮度上限有两个，因为它们答的是两个不同的问题：
+       *
+       * kSeed = 1.12 —— 「这个像素能不能算作**种子**（直接认定为墙）」。
+       *   这里必须紧。浅色衣服最麻烦：它的归一化色度常常和墙几乎一样
+       *   （李红英的粉白上衣实测只差 0.004，色度闸完全拦不住），但 RGB 比墙底
+       *   亮 15% 以上 —— 只要它有一个像素混进种子，整件衣服就会被泛洪吃掉
+       *   （实测就是这样：换白底后衣服变一片白）。底色取的是边带色的主峰，
+       *   墙面自己实测 k ≤ 1.06，12% 留了足够余量。
+       *
+       * kMax = 1.5 —— 「泛洪能不能往这里走」。这里可以松，因为能不能走到由
+       *   相邻像素的色差把关：墙面自己的亮暗过渡是连续的，走得过去；衣服边界
+       *   是一道坎（实测墙面→上衣一格就差 +40），过不去。松一点的好处是
+       *   墙面上一片渐亮的高光（比如渐晕、侧光）也能被清掉。 */
+      kSeed: 1.12, kMax: 1.5
+    };
+  }
+
+  /**
+   * 该像素是不是「和底色同一种材质」
+   * @param {Uint8Array} buf RGBA
+   * @param {number} p     像素起始下标
+   * @param {object} sig   chromaSig 的结果
+   * @param {number} kMax  亮度上限（种子用 kSeed，泛洪用 kMax）
+   */
+  function materialOk(buf, p, sig, kMax) {
+    var r = buf[p], g = buf[p + 1], b = buf[p + 2];
+    var Y = lumOf(r, g, b);
+    if (Y < 6) Y = 6;                       // 极暗像素的归一化色度会炸，夹一下
+    var d1 = (r - Y) / Y - sig.cr;
+    var d2 = (b - Y) / Y - sig.cb;
+    if (d1 < 0) d1 = -d1;
+    if (d2 < 0) d2 = -d2;
+    if ((d1 > d2 ? d1 : d2) > sig.tol) return false;
+    var k = (r * sig.r + g * sig.g + b * sig.b) / sig.n;
+    return k >= sig.kMin && k <= kMax;
+  }
+
+  /**
+   * 背景 = 「从画面边缘向内、与底色同材质、且一路连续过渡」的那一整片
    *
    * 解决什么问题：只按「与基准背景色的距离 ≤ 容差」判背景时，背景**不均**的
    * 照片会漏 —— 白墙左侧偏暗、照片自带渐晕、墙上有阴影，这些区域离基准色
    * 可能超过容差，于是被判成前景原样留下，换白底后就是一条灰黑影。
    * 靠容差硬调去盖，往往会连带吃掉浅色前景，怎么调都不对。
    *
-   * 泛洪用的是**局部判据**：一个像素只要 (a) 与紧邻的已判定背景差得不多
-   * （背景本身是连续渐变的），且 (b) 与基准背景色的总偏差还在合理范围内
-   * （防止顺着某个过渡一路漂到深色衣服上），就纳为背景。
-   * 于是「渐变的阴影」能一路走进去，而「衣服边缘」因为一步之差太大而挡住。
+   * 所以改为「连通性 + 材质」两个条件一起判：
+   *   · 材质：色度与底色一致（皮肤、布料挡在门外）、亮度在底色的合理光照范围内；
+   *   · 连通：必须能从画面边缘**一路平滑地**走进来（每一步与相邻像素的色差都小）。
+   * 于是「渐变的阴影/渐晕」能一路走进去，而「衣服、皮肤」因为在轮廓处有一道坎
+   * 而进不来。
    *
-   * @param {Uint8Array} mask 已有遮罩（1=背景），本函数在此基础上扩充；
-   *                           中途会用到值 2 做「已检查过、非背景」的标记，
-   *                           调用方在交给 distTransform 之前记得把 2 归零
+   * ⚠️ 判据里**不能**再用「单看这个像素离底色近不近」当入场券。踩过的坑：
+   * 浅粉色上衣的 RGB 与白墙几乎一模一样（实测离底色只有 3.8），单看颜色它
+   * 就是背景 —— 只要它在任何地方被直接认定为背景，泛洪就会顺着整件衣服铺开，
+   * 换白底后衣服变一片白、只剩几道深色褶子。所以入场券只能由「连通」发。
+   *
+   * @param {Uint8Array} mask 全 0 进来即可；1 = 背景，2 = 查过、不是背景
+   *                          （调用方交给 distTransform 之前要把 2 归零）
    * @param {{r,g,b}} b0      基准背景色（sampleBg 的结果）
-   * @returns {number}        新增判定为背景的像素数
+   * @param {number} tol      容差：越大越宽松（同时影响色度闸与「一步之差」）
+   * @returns {number}        判定为背景的像素数
    */
-  function floodBg(buf, w, h, b0, tol, mask) {
+  function floodBg(buf, w, h, b0, tol, mask, sig) {
+    if (!sig) sig = chromaSig(b0, tol);
     // 每跳允许的色差：背景渐变实测每像素只差 0.1~0.3 级，而边界哪怕有抗锯齿
     // 也是每像素十几级起 —— 取小值既能走通渐变，又挡住「顺着 2~3px 的柔和边缘
-    // 渗进浅色衣服」。卡住的零星噪点不碍事：BFS 会从其它方向绕过去，
-    // 只有连成整片墙的噪声才会阻断，而那种背景本来就没法可靠判定。
-    var dl = Math.round(Math.min(Math.max(tol * 0.3, 6), 12));
-    var dl2 = dl * dl * 3;
-    // 与基准色的总偏差上限：放开一些（连通性已经挡住了非背景），
-    // 白墙阴影、渐晕这类「同一面墙但明暗不同」的情况就靠它放行
-    var dm = Math.round(Math.max(tol * 3, 100));
-    var dm2 = dm * dm * 3;
-    var br = b0.r, bg = b0.g, bb = b0.b;
+    // 渗进浅色衣服」。
+    var dl = Math.round(Math.min(Math.max(tol * 0.3, 7), 14));
+    var n = w * h;
+
+    /* 「一步之差」不看原始像素，看 3×3 中值滤波后的**亮度**。
+     *
+     * 为什么：头发/深色眼镜这类高对比边缘旁边，JPEG 会振出一圈「蚊式噪声」——
+     * 实测紧挨头发的墙面上，相邻像素在 191 ↔ 228 之间来回跳（一步 ±36）。
+     * 直接比原始像素，泛洪在这圈噪声里走不动，于是头周围留一圈灰影
+     * （用户说的「换白底后脸旁边一圈黑」就是这个）。把判据改松到能跨过 ±36，
+     * 又会顺手跨过「墙面→浅色衣服」那道 +40 的坎，衣服就被吃掉了。
+     *
+     * 中值滤波正好只治这个病：孤立噪点被邻域中位数抹平，而真正的边缘
+     * （单调的一整坎）中值滤波**不会**糊 —— 噪声区一步之差降到个位数，
+     * 衣服边缘依然是一坎。所以判据只在中值图上比，既走得进噪声、又跨不过衣服。
+     *
+     * 懒算 + 缓存：只有泛洪边界上的像素才需要，绝大多数像素根本用不到。 */
+    var med = new Uint8Array(n), medDone = new Uint8Array(n), s9 = new Uint8Array(9);
+    function medAt(j) {
+      if (medDone[j]) return med[j];
+      medDone[j] = 1;
+      var x = j % w, y = (j - x) / w, k = 0, dy, dx, yy, xx, q;
+      for (dy = -1; dy <= 1; dy++) {
+        yy = y + dy < 0 ? 0 : (y + dy >= h ? h - 1 : y + dy);
+        for (dx = -1; dx <= 1; dx++) {
+          xx = x + dx < 0 ? 0 : (x + dx >= w ? w - 1 : x + dx);
+          q = (yy * w + xx) * 4;
+          s9[k++] = (buf[q] * 77 + buf[q + 1] * 150 + buf[q + 2] * 29) >> 8;
+        }
+      }
+      // 9 个数取中位数：插入排序到中位就够
+      for (k = 1; k < 9; k++) {
+        var v = s9[k], m = k - 1;
+        while (m >= 0 && s9[m] > v) { s9[m + 1] = s9[m]; m--; }
+        s9[m + 1] = v;
+      }
+      med[j] = s9[4];
+      return med[j];
+    }
 
     /* 队列按需扩容：4K 起步、满了翻倍。比一上来就 Int32Array(w*h) 省得多 ——
        四千万像素的照片那样一口气就是 160MB，手机浏览器会直接崩。
@@ -328,56 +496,66 @@
       }
       q[tail++] = i;
     }
+    function seed(i) {
+      if (mask[i]) return;
+      mask[i] = 1; added++;
+      push(i);
+    }
 
-    /* 遮罩复用成三态，省掉一个 w*h 的 visited 数组：
-       0 = 未定，1 = 判定为背景，2 = 检查过、不是背景（入队一次就不再重复考虑） */
-
-    /* 起点取「已确定背景里紧贴未判定像素的那一圈」，也就是背景与前景的交界。
-       为什么不把整片背景都塞进队列：那样队列会涨到几百万个索引（几十 MB），
-       而这一圈只有「边界周长」量级，效果完全一样 —— 泛洪本来就只需要一个起跑线。
-       ⚠️ 也不能像早先那样只从「四条边」起步：底边常被深色衣服顶满，那排像素
-       会被当成种子，整片衣服顺着就泛洪进去了（实测确实会）。 */
+    /* ── 起跑线：顶边 + 左/右两条边上的「连续墙段」 ─────────────────────
+     *
+     * 为什么是「段」而不是整条边：一件浅色衣服的某些像素也能过材质闸，
+     * 整条边当种子会把衣服吃进去。改成先在边上找出**连续成段**的墙面
+     * （短于 3% 的一律不要），衣服那段就自然被排除在外。
+     *
+     * 为什么**不要底边**：证件照的底边几乎必然是人物的衣服。实测把底边
+     * 算进来，李红英那件浅粉上衣会被整件吃掉。宁可少一个入口。
+     */
+    var scanEdge = function (len, at, need) {
+      var k = 0, s, e, q2;
+      var ok = function (j) { return mask[j] === 1 || materialOk(buf, j * 4, sig, sig.kSeed); };
+      while (k < len) {
+        while (k < len && !ok(at(k))) k++;
+        if (k >= len) break;
+        s = k;
+        while (k < len && ok(at(k))) k++;
+        e = k;
+        if (e - s >= need) for (q2 = s; q2 < e; q2++) seed(at(q2));
+      }
+    };
     var i, x, y, p;
-    for (y = 0; y < h; y++) {
-      var row = y * w;
-      for (x = 0; x < w; x++) {
-        i = row + x;
-        if (mask[i] !== 1) continue;
-        if ((x > 0 && !mask[i - 1]) || (x < w - 1 && !mask[i + 1]) ||
-            (y > 0 && !mask[i - w]) || (y < h - 1 && !mask[i + w])) push(i);
+    var needH = Math.max(4, Math.round(h * 0.03));
+    var needW = Math.max(4, Math.round(w * 0.03));
+    scanEdge(h, function (k) { return k * w; }, needH);              // 左边
+    scanEdge(h, function (k) { return k * w + w - 1; }, needH);      // 右边
+    scanEdge(w, function (k) { return k; }, needW);                  // 顶边
+    /* 兜底：一条合格边段都没有（人物把三条边都占满、或整张图都没背景色），
+       退一步用四条边上过得了材质闸的像素起步，免得泛洪整个不动 */
+    if (tail === 0) {
+      for (x = 0; x < w; x++) { if (materialOk(buf, x * 4, sig, sig.kSeed)) seed(x); }
+      for (y = 0; y < h; y++) {
+        if (materialOk(buf, (y * w) * 4, sig, sig.kSeed)) seed(y * w);
+        if (materialOk(buf, (y * w + w - 1) * 4, sig, sig.kSeed)) seed(y * w + w - 1);
       }
     }
-    /* 兜底：容差被调得极小、一个背景像素都没判出来时，改用四条边上颜色贴近
-       基准色的像素起步，免得泛洪整个不动 */
-    if (tail === 0) {
-      var trySeed = function (j) {
-        if (mask[j]) return;
-        var p2 = j * 4;
-        var r2 = buf[p2] - br, g2 = buf[p2 + 1] - bg, b2 = buf[p2 + 2] - bb;
-        if (r2 * r2 + g2 * g2 + b2 * b2 > dm2) return;
-        mask[j] = 1; added++;
-        push(j);
-      };
-      for (x = 0; x < w; x++) { trySeed(x); trySeed((h - 1) * w + x); }
-      for (y = 0; y < h; y++) { trySeed(y * w); trySeed(y * w + w - 1); }
-    }
 
+    /* ── 泛洪：走一步要同时过三关 ─────────────────────────────────────
+     *   ① 与相邻已判背景的一步色差够小（背景是连续渐变的，轮廓不是）；
+     *   ② 色度还贴着底色（皮肤、彩色布料挡在门外）；
+     *   ③ 亮度比还在「同一面墙被不同强度照亮」的范围内。
+     * 这里用的是宽松的 kMax：能不能走到由①把关，谁有资格当种子才用严格的 kSeed。 */
     while (head < tail) {
       i = q[head++];
-      p = i * 4;
-      var cr = buf[p], cg = buf[p + 1], cb = buf[p + 2];
+      var mi = medAt(i);
       var ix = i % w, iy = (i - ix) / w;
-      for (var k = 0; k < 4; k++) {
-        var nx = ix + (k === 0 ? -1 : k === 1 ? 1 : 0);
-        var ny = iy + (k === 2 ? -1 : k === 3 ? 1 : 0);
+      for (var k2 = 0; k2 < 4; k2++) {
+        var nx = ix + (k2 === 0 ? -1 : k2 === 1 ? 1 : 0);
+        var ny = iy + (k2 === 2 ? -1 : k2 === 3 ? 1 : 0);
         if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
         var j = ny * w + nx;
         if (mask[j]) continue;                                    // 1 或 2 都跳过
-        var qp = j * 4;
-        var ar = buf[qp] - cr, ag = buf[qp + 1] - cg, ab = buf[qp + 2] - cb;
-        if (ar * ar + ag * ag + ab * ab > dl2) { mask[j] = 2; continue; }   // 一步跨不过去 → 这里是轮廓
-        var er = buf[qp] - br, eg = buf[qp + 1] - bg, eb = buf[qp + 2] - bb;
-        if (er * er + eg * eg + eb * eb > dm2) { mask[j] = 2; continue; }   // 离基准背景色太远
+        if (Math.abs(medAt(j) - mi) > dl) { mask[j] = 2; continue; }        // 一坎 → 这里是轮廓
+        if (!materialOk(buf, j * 4, sig, sig.kMax)) { mask[j] = 2; continue; } // 材质变了
         mask[j] = 1; added++;
         push(j);
       }
@@ -467,27 +645,31 @@
   function keyOut(buf, w, h, old, nw, tol, feather, cut) {
     var n = w * h;
     var br = old.r, bgc = old.g, bb = old.b;
-    var lim = tol * tol * 3;          // 与 (Δr²+Δg²+Δb²) 直接比，省掉开方
     var mask = new Uint8Array(n);
     var i, x, y, p, bgCount = 0;
+    var sig = chromaSig(old, tol);
 
-    for (i = 0; i < n; i++) {
-      p = i * 4;
-      var dr = buf[p] - br, dg = buf[p + 1] - bgc, db = buf[p + 2] - bb;
-      if (dr * dr + dg * dg + db * db <= lim) { mask[i] = 1; bgCount++; }
-    }
+    /* ① 背景 = 「从画面边缘向内、与底色同材质、且一路连续过渡」的那一整片。
+       全部交给 floodBg 一次完成 —— 这里刻意**不做**逐像素的颜色初判：
+       初判会把「离底色很近」的浅色衣服直接标成背景（实测浅粉上衣离白墙底只有 3.8），
+       然后泛洪就从衣服内部铺开，整件衣服被吃掉。背景的资格只能由「连通」发。 */
+    bgCount = floodBg(buf, w, h, old, tol, mask, sig);
 
-    // ①b 再向内泛洪：把「离基准色较远、但和相邻背景是连续过渡」的区域也收进来。
-    //     白墙一侧偏暗、照片自带渐晕、墙上阴影 —— 就是靠这一步吃掉，
-    //     而不是逼用户把「背景容差」调到会连带啃掉浅色前景的程度。
-    bgCount += floodBg(buf, w, h, old, tol, mask);
+    /* ①c 清掉零碎孤岛。
+       人脸轮廓那一圈是「墙 → 皮肤」的过渡，JPEG 色度二次采样加镜头虚化之后，
+       个别像素会带着一点肤色底色 —— 它们过不了材质闸，于是在轮廓外散成一颗颗
+       灰点。换白底后就是脸上旁边一层「黑头」似的麻点（用户实测截图里能看到）。
+       判据用连通性：背景必然和画面边缘相连（人物在中间），前景必然连成一大片，
+       所以「面积很小、又没挨着画面边缘」的小块一定是噪声，翻到对面去。
+       只翻小块，长条状的细发丝、大块的空隙都不会动。 */
+    for (i = 0; i < n; i++) if (mask[i] === 2) mask[i] = 0;   // 泛洪的「检查过=非背景」标记，先归零
+    despeckle(mask, w, h);
 
     // 有符号距离场：前景侧 = 到最近背景的距离（正），背景侧 = 到最近前景的距离（负）
     // 注意 mask[i]=1 表示「背景」，所以负值要赋给 mask[i] 为真的像素
     var sd = distTransform(mask, w, h);
     var inv = new Uint8Array(n);
     for (i = 0; i < n; i++) {
-      if (mask[i] === 2) mask[i] = 0;                     // 泛洪留下的「检查过=非背景」标记，归零
       inv[i] = mask[i] ? 0 : 1;                           // 1 = 前景，作为距离变换的源
     }
     var dfg = distTransform(inv, w, h);

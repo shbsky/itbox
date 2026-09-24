@@ -130,30 +130,111 @@
   /* ================= 核心算法 ================= */
 
   /**
-   * 自动估计背景色：取图像四条边条带的**中位数**
+   * 自动估计背景色
    *
-   * 用中位数而不是平均值 —— 前景（头发、肩膀、手臂）经常从画面边缘侵入，
-   * 平均值会被这些离群点拉偏，中位数对入侵像素免疫。
+   * 两路取样互相校验，谁更可信用谁：
+   *
+   *   ① 四条边带的主色 —— 覆盖面积大、最能代表「整张图的环境色」，
+   *      拿它当基准去解边缘 α 最准。但半身照的袖子、肩膀常常铺满左右和底边，
+   *      深色衣服会直接抢走主峰（实测能取到 rgb(42,50,74) 这种衣服色），
+   *      基准色一错，整张照片的判定就全崩。
+   *   ② 四个角的主色 —— 证件照的角几乎必然是背景（人物在正中），
+   *      被前景污染的概率最低。缺点是四角有暗角时会偏暗。
+   *
+   * 判据：看两个结果差多远。差得近（≤90）说明边带没被污染，用更全局的边带色；
+   * 差得远说明边带被前景抢了，改用四角色。四角之间自己都不一致时（暗角/杂物）
+   * 四角色不可信，退回边带色。
+   *
+   * 「主色」= 量化直方图（每通道 4 级）的峰值 bin，再对落在峰里的**原始像素**
+   * 求平均 —— 中位数会被占比近半的前景拉偏，峰值对散落的离群点免疫。
    */
   function sampleBg(data, w, h) {
+    /** 把矩形区域内的像素按步长收集进桶 */
+    function collect(x0, y0, x1, y1, rs, gs, bs) {
+      var st = Math.max(1, Math.round(Math.max(w, h) / 400));
+      for (var y = Math.max(0, y0); y < Math.min(h, y1); y += st) {
+        for (var x = Math.max(0, x0); x < Math.min(w, x1); x += st) {
+          var i = (y * w + x) * 4;
+          rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+        }
+      }
+    }
+    /** 桶里的主色（直方图峰值 → 峰内原始像素求平均） */
+    function peak(rs, gs, bs) {
+      var n = rs.length;
+      if (!n) return null;
+      var hist = new Uint16Array(262144), i, k;
+      for (i = 0; i < n; i++) hist[((rs[i] >> 2) << 12) | ((gs[i] >> 2) << 6) | (bs[i] >> 2)]++;
+      var best = 0, bestN = -1;
+      for (k = 0; k < 262144; k++) { if (hist[k] > bestN) { bestN = hist[k]; best = k; } }
+      var br = (best >> 12) & 63, bg = (best >> 6) & 63, bb = best & 63;
+      var sr = 0, sg = 0, sb = 0, sn = 0;
+      for (i = 0; i < n; i++) {
+        if ((rs[i] >> 2) === br && (gs[i] >> 2) === bg && (bs[i] >> 2) === bb) {
+          sr += rs[i]; sg += gs[i]; sb += bs[i]; sn++;
+        }
+      }
+      if (!sn) return { r: br * 4 + 2, g: bg * 4 + 2, b: bb * 4 + 2 };
+      return { r: Math.round(sr / sn), g: Math.round(sg / sn), b: Math.round(sb / sn) };
+    }
+    function gap2(a, b) {
+      var dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b;
+      return dr * dr + dg * dg + db * db;
+    }
+    var er = [], eg = [], eb = [], i;
+
+    // ① 四条边带
     var bw = Math.max(2, Math.round(w * 0.06));
     var bh = Math.max(2, Math.round(h * 0.06));
-    var step = Math.max(1, Math.round(Math.max(w, h) / 300));
-    var rs = [], gs = [], bs = [];
-    var push = function (x, y) {
-      var i = (y * w + x) * 4;
-      rs.push(data[i]); gs.push(data[i + 1]); bs.push(data[i + 2]);
+    collect(0, 0, bw, h, er, eg, eb);
+    collect(w - bw, 0, w, h, er, eg, eb);
+    collect(0, 0, w, bh, er, eg, eb);
+    collect(0, h - bh, w, h, er, eg, eb);
+    var edge = peak(er, eg, eb) || { r: 255, g: 255, b: 255 };
+
+    // ② 角块取样。**先看上边两个角** —— 证件照头顶必须留白，所以上边两侧
+    //    几乎必然是背景；而下边两角在半身照里常被肩膀/袖子顶满（实测就是这种
+    //    图，下两角直接是深色衣服）。先看四角会被下角带偏，所以上角优先。
+    var cw = Math.max(3, Math.round(w * 0.07)), chh = Math.max(3, Math.round(h * 0.07));
+    var cornerPeak = function (x0, y0) {
+      var r = [], g = [], b = [];
+      collect(x0, y0, x0 + cw, y0 + chh, r, g, b);
+      return peak(r, g, b);
     };
-    var x, y;
-    for (y = 0; y < h; y += step) {
-      for (x = 0; x < bw; x += step) { push(x, y); push(w - 1 - x, y); }
+    var corner = null;
+    var tl = cornerPeak(0, 0), tr = cornerPeak(w - cw, 0);
+    if (tl && tr && gap2(tl, tr) <= 90 * 90) {
+      corner = { r: Math.round((tl.r + tr.r) / 2), g: Math.round((tl.g + tr.g) / 2), b: Math.round((tl.b + tr.b) / 2) };
     }
-    for (x = 0; x < w; x += step) {
-      for (y = 0; y < bh; y += step) { push(x, y); push(x, h - 1 - y); }
+
+    if (!corner) {
+      // 上两角自己都不一致 → 退一步看四个角是否整体一致（都没被污染）
+      var cs = [tl, tr, cornerPeak(0, h - chh), cornerPeak(w - cw, h - chh)];
+      var ok = true, maxGap = 0;
+      for (i = 0; i < 4; i++) {
+        if (!cs[i]) { ok = false; break; }
+        for (var j = i + 1; j < 4; j++) {
+          var g = gap2(cs[i], cs[j]);
+          if (g > maxGap) maxGap = g;
+        }
+      }
+      if (ok && maxGap <= 90 * 90) {
+        // 四角一致 → 逐通道取中位数，免得被其中一个角拖偏
+        var mid = function (arr) {
+          var a = arr.slice().sort(function (p, q) { return p - q; });
+          return Math.round((a[1] + a[2]) / 2);
+        };
+        corner = {
+          r: mid(cs.map(function (c) { return c.r; })),
+          g: mid(cs.map(function (c) { return c.g; })),
+          b: mid(cs.map(function (c) { return c.b; }))
+        };
+      }
     }
-    if (!rs.length) return { r: 255, g: 255, b: 255 };
-    var med = function (a) { a.sort(function (p, q) { return p - q; }); return a[a.length >> 1]; };
-    return { r: med(rs), g: med(gs), b: med(bs) };
+    if (!corner) return edge;     // 角全不可信 → 认命用边带色
+
+    // ③ 边带与角差得近 → 边带没被前景污染，它更「全局」，α 解算更准；否则用角
+    return gap2(edge, corner) <= 90 * 90 ? edge : corner;
   }
 
   /**
@@ -199,6 +280,109 @@
       }
     }
     return d;
+  }
+
+  /**
+   * 从画面四条边向内「泛洪」，把连通的背景整片收进遮罩
+   *
+   * 解决什么问题：只按「与基准背景色的距离 ≤ 容差」判背景时，背景**不均**的
+   * 照片会漏 —— 白墙左侧偏暗、照片自带渐晕、墙上有阴影，这些区域离基准色
+   * 可能超过容差，于是被判成前景原样留下，换白底后就是一条灰黑影。
+   * 靠容差硬调去盖，往往会连带吃掉浅色前景，怎么调都不对。
+   *
+   * 泛洪用的是**局部判据**：一个像素只要 (a) 与紧邻的已判定背景差得不多
+   * （背景本身是连续渐变的），且 (b) 与基准背景色的总偏差还在合理范围内
+   * （防止顺着某个过渡一路漂到深色衣服上），就纳为背景。
+   * 于是「渐变的阴影」能一路走进去，而「衣服边缘」因为一步之差太大而挡住。
+   *
+   * @param {Uint8Array} mask 已有遮罩（1=背景），本函数在此基础上扩充；
+   *                           中途会用到值 2 做「已检查过、非背景」的标记，
+   *                           调用方在交给 distTransform 之前记得把 2 归零
+   * @param {{r,g,b}} b0      基准背景色（sampleBg 的结果）
+   * @returns {number}        新增判定为背景的像素数
+   */
+  function floodBg(buf, w, h, b0, tol, mask) {
+    // 每跳允许的色差：背景渐变实测每像素只差 0.1~0.3 级，而边界哪怕有抗锯齿
+    // 也是每像素十几级起 —— 取小值既能走通渐变，又挡住「顺着 2~3px 的柔和边缘
+    // 渗进浅色衣服」。卡住的零星噪点不碍事：BFS 会从其它方向绕过去，
+    // 只有连成整片墙的噪声才会阻断，而那种背景本来就没法可靠判定。
+    var dl = Math.round(Math.min(Math.max(tol * 0.3, 6), 12));
+    var dl2 = dl * dl * 3;
+    // 与基准色的总偏差上限：放开一些（连通性已经挡住了非背景），
+    // 白墙阴影、渐晕这类「同一面墙但明暗不同」的情况就靠它放行
+    var dm = Math.round(Math.max(tol * 3, 100));
+    var dm2 = dm * dm * 3;
+    var br = b0.r, bg = b0.g, bb = b0.b;
+
+    /* 队列按需扩容：4K 起步、满了翻倍。比一上来就 Int32Array(w*h) 省得多 ——
+       四千万像素的照片那样一口气就是 160MB，手机浏览器会直接崩。
+       正常背景的 BFS 队列峰值只有「连通区边界周长」量级，远小于总面积。 */
+    var cap = 4096, q = new Int32Array(cap);
+    var head = 0, tail = 0, added = 0;
+    function push(i) {
+      if (tail === cap) {
+        cap *= 2;
+        var nq = new Int32Array(cap);
+        nq.set(q);
+        q = nq;
+      }
+      q[tail++] = i;
+    }
+
+    /* 遮罩复用成三态，省掉一个 w*h 的 visited 数组：
+       0 = 未定，1 = 判定为背景，2 = 检查过、不是背景（入队一次就不再重复考虑） */
+
+    /* 起点取「已确定背景里紧贴未判定像素的那一圈」，也就是背景与前景的交界。
+       为什么不把整片背景都塞进队列：那样队列会涨到几百万个索引（几十 MB），
+       而这一圈只有「边界周长」量级，效果完全一样 —— 泛洪本来就只需要一个起跑线。
+       ⚠️ 也不能像早先那样只从「四条边」起步：底边常被深色衣服顶满，那排像素
+       会被当成种子，整片衣服顺着就泛洪进去了（实测确实会）。 */
+    var i, x, y, p;
+    for (y = 0; y < h; y++) {
+      var row = y * w;
+      for (x = 0; x < w; x++) {
+        i = row + x;
+        if (mask[i] !== 1) continue;
+        if ((x > 0 && !mask[i - 1]) || (x < w - 1 && !mask[i + 1]) ||
+            (y > 0 && !mask[i - w]) || (y < h - 1 && !mask[i + w])) push(i);
+      }
+    }
+    /* 兜底：容差被调得极小、一个背景像素都没判出来时，改用四条边上颜色贴近
+       基准色的像素起步，免得泛洪整个不动 */
+    if (tail === 0) {
+      var trySeed = function (j) {
+        if (mask[j]) return;
+        var p2 = j * 4;
+        var r2 = buf[p2] - br, g2 = buf[p2 + 1] - bg, b2 = buf[p2 + 2] - bb;
+        if (r2 * r2 + g2 * g2 + b2 * b2 > dm2) return;
+        mask[j] = 1; added++;
+        push(j);
+      };
+      for (x = 0; x < w; x++) { trySeed(x); trySeed((h - 1) * w + x); }
+      for (y = 0; y < h; y++) { trySeed(y * w); trySeed(y * w + w - 1); }
+    }
+
+    while (head < tail) {
+      i = q[head++];
+      p = i * 4;
+      var cr = buf[p], cg = buf[p + 1], cb = buf[p + 2];
+      var ix = i % w, iy = (i - ix) / w;
+      for (var k = 0; k < 4; k++) {
+        var nx = ix + (k === 0 ? -1 : k === 1 ? 1 : 0);
+        var ny = iy + (k === 2 ? -1 : k === 3 ? 1 : 0);
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+        var j = ny * w + nx;
+        if (mask[j]) continue;                                    // 1 或 2 都跳过
+        var qp = j * 4;
+        var ar = buf[qp] - cr, ag = buf[qp + 1] - cg, ab = buf[qp + 2] - cb;
+        if (ar * ar + ag * ag + ab * ab > dl2) { mask[j] = 2; continue; }   // 一步跨不过去 → 这里是轮廓
+        var er = buf[qp] - br, eg = buf[qp + 1] - bg, eb = buf[qp + 2] - bb;
+        if (er * er + eg * eg + eb * eb > dm2) { mask[j] = 2; continue; }   // 离基准背景色太远
+        mask[j] = 1; added++;
+        push(j);
+      }
+    }
+    return added;
   }
 
   /**
@@ -259,7 +443,8 @@
    * 换底色 / 抠透明（就地修改 buf）
    *
    * 三步走：
-   *   ① 颜色阈值切出「确定背景」的二值遮罩
+   *   ① 颜色阈值 + 从画面边缘泛洪，切出「确定背景」的二值遮罩
+   *      （只按阈值不行 —— 背景不均时漏掉的那片会被原样留下，就是那条灰黑影）
    *   ② 算**有符号距离**：前景侧为正、背景侧为负，|sdf| ≤ R 就是过渡带
    *      —— 必须两侧都算。抗锯齿过渡带是跨在阈值分界线两侧的，
    *         只算「到背景的距离」会把分界线靠背景一侧的半前景像素当成纯背景抹掉，
@@ -292,11 +477,19 @@
       if (dr * dr + dg * dg + db * db <= lim) { mask[i] = 1; bgCount++; }
     }
 
+    // ①b 再向内泛洪：把「离基准色较远、但和相邻背景是连续过渡」的区域也收进来。
+    //     白墙一侧偏暗、照片自带渐晕、墙上阴影 —— 就是靠这一步吃掉，
+    //     而不是逼用户把「背景容差」调到会连带啃掉浅色前景的程度。
+    bgCount += floodBg(buf, w, h, old, tol, mask);
+
     // 有符号距离场：前景侧 = 到最近背景的距离（正），背景侧 = 到最近前景的距离（负）
     // 注意 mask[i]=1 表示「背景」，所以负值要赋给 mask[i] 为真的像素
     var sd = distTransform(mask, w, h);
     var inv = new Uint8Array(n);
-    for (i = 0; i < n; i++) inv[i] = mask[i] ? 0 : 1;   // 1 = 前景，作为距离变换的源
+    for (i = 0; i < n; i++) {
+      if (mask[i] === 2) mask[i] = 0;                     // 泛洪留下的「检查过=非背景」标记，归零
+      inv[i] = mask[i] ? 0 : 1;                           // 1 = 前景，作为距离变换的源
+    }
     var dfg = distTransform(inv, w, h);
     for (i = 0; i < n; i++) { if (mask[i]) sd[i] = -dfg[i]; }
     inv = null; dfg = null;
@@ -434,7 +627,7 @@
         '<div class="row tight">' +
         '<div class="field"><label class="field-l">背景容差 <b class="qval" id="ipTolV">30</b></label>' +
         '<input type="range" class="range" id="ipTol" min="5" max="120" step="1" value="30">' +
-        '<div class="hint">越大判为背景的像素越多。背景有阴影、渐变或偏灰时调大</div></div>' +
+        '<div class="hint">越大判为背景的像素越多。墙上的阴影、渐晕、背景不匀会从画面边缘自动向内识别，一般不用手动调；换底后还有残留再往大调</div></div>' +
         '<div class="field"><label class="field-l">边缘去污带宽 <b class="qval" id="ipFerV">3 px</b></label>' +
         '<input type="range" class="range" id="ipFer" min="1" max="10" step="1" value="3">' +
         '<div class="hint">重算多宽的边缘带，用来消掉换底色后的白色光晕。<b>调大不会冲淡脸部</b></div></div>' +
@@ -1176,4 +1369,15 @@
       };
     }
   });
+
+  /* ---- 离线自检出口 ------------------------------------------------
+   * 把抠图的纯函数挂出去，好让 node 端（无浏览器）跑算法回归：
+   * 合成一张「白底 + 左侧阴影带 + 深色人形」的图，检查阴影带有没有被
+   * 完整换成新底色、人形有没有被啃。浏览器里只是多一个引用，无副作用。 */
+  if (typeof window !== 'undefined' && window.LB) {
+    window.LB._idAlgo = {
+      sampleBg: sampleBg, distTransform: distTransform, floodBg: floodBg,
+      bandAlpha: bandAlpha, keyOut: keyOut
+    };
+  }
 })();

@@ -1,5 +1,5 @@
 /* IT工具箱 Service Worker */
-const CACHE = 'itbox-v14';
+const CACHE = 'itbox-v15';
 const ASSETS = [
   './',
   './index.html',

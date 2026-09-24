@@ -544,6 +544,13 @@
         U.$('#dlCnt', root).textContent = n ? '已选 ' + n + ' 页' : '';
       }
       function drawThumbs() {
+        /* 没打开文档时必须先退出：原来直接 S.bytes.slice() 会抛 TypeError，
+         * app.js 的 try/catch 会把整个面板换成「工具初始化出错」，
+         * 用户连「源文件」的选文件入口都看不见。 */
+        if (!S.doc) {
+          grid.innerHTML = '<div class="pdf-empty">还没有打开 PDF —— 先在上面「源文件」选一个文件</div>';
+          return;
+        }
         grid.innerHTML = '<div class="pdf-loading">正在生成缩略图…</div>';
         U.pdfOpen(S.bytes.slice()).then(function (d) {
           var used = d;
@@ -619,6 +626,11 @@
       }
       function upd() { goBtn.disabled = !order; }
       function drawThumbs() {
+        /* 同上：没文档时直接 S.bytes.slice() 会抛，面板会被整块替换成报错页。 */
+        if (!S.doc) {
+          grid.innerHTML = '<div class="pdf-empty">还没有打开 PDF —— 先在上面「源文件」选一个文件</div>';
+          return;
+        }
         grid.innerHTML = '<div class="pdf-loading">正在生成缩略图…</div>';
         U.pdfOpen(S.bytes.slice()).then(function (d) {
           var i = 0;
